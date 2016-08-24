@@ -58,6 +58,7 @@ Edit your .gitfat file and add the following:
     bucket={bucketname}
     key={access_key_id}
     secret={secret_access_key}
+    objdir={location_to_store_git_fat_object}
 
 And then you're done.
 
