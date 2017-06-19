@@ -118,13 +118,12 @@ except ImportError:
             raise RuntimeError("S3Backend requires boto.")
 
 BLOCK_SIZE = 4096
-
 def verbose_stderr(*args, **kwargs):
     return print(*args, file=sys.stderr, **kwargs)
 def verbose_ignore(*args, **kwargs):
     pass
 
-def ensure_binary_mode(stream):
+def ensure_binary_mode(stream):    
     try:       # Attempt the Python-3 way, also needed to handle unicode
         return stream.detach()
     except:
@@ -151,11 +150,24 @@ def umask():
     return old
 
 def readblocks(stream):
-    bytecount = 0
+    bytecount = 0L
+    count = 0L
     while True:
         data = stream.read(BLOCK_SIZE)
+        # data = stream.read()
+        count += 1
+        # if count % 30000 == 1:
+            # print('bytecount is %d' % bytecount, file=sys.stderr)
         bytecount += len(data)
+        # if data:
+            # yield data
+        # else:
+            # print('----bytecount is %d' % bytecount, file=sys.stderr)
+            # break
         if not data:
+            print('----Not data so break read file', file=sys.stderr)
+            print('----count is %d' % bytecount, file=sys.stderr)
+            print('bytecount is %d' % bytecount, file=sys.stderr)
             break
         yield data
 def cat_iter(initer, outstream):
@@ -271,6 +283,7 @@ class GitFat(object):
     DecodeError = RuntimeError
     def __init__(self):
         self.verbose = verbose_stderr if os.environ.get('GIT_FAT_VERBOSE') else verbose_ignore
+        self.verbose('self.verbose is %s' %self.verbose)
         self.gitroot = subprocess.check_output('git rev-parse --show-toplevel'.split()).strip()
         self.gitdir = subprocess.check_output('git rev-parse --git-dir'.split()).strip()
         cfgpath = os.path.join(self.gitroot,b'.gitfat')
@@ -283,10 +296,13 @@ class GitFat(object):
             self.encode = self.encode_v1
         else:
             self.encode = self.encode_v2
+        self.verbose('self.encode is %s' %self.encode)
         def magiclen(enc):
             return len(enc(hashlib.sha1(b'dummy').hexdigest().encode('ASCII'), 5))
         self.magiclen = magiclen(self.encode) # Current version
+        self.verbose("--self.magiclen is %s" % self.magiclen)
         self.magiclens = [magiclen(enc) for enc in [self.encode_v1, self.encode_v2]] # All prior versions
+        self.verbose("--self.magiclens is %s" % self.magiclens)
         self.backend = self.get_backend(self.objdir)
     def setup(self):
         mkdir_p(self.objdir)
@@ -296,13 +312,16 @@ class GitFat(object):
             to use.  Currently supports rsync and s3.
         """
         cfgpath   = os.path.join(self.gitroot,b'.gitfat')
+        print ('---cfgpath is %s' %cfgpath)
         if gitconfig_get('rsync.remote', file=cfgpath):
+            print ('---In rsync.remote')
             remote    = gitconfig_get('rsync.remote', file=cfgpath)
             ssh_port  = gitconfig_get('rsync.sshport', file=cfgpath)
             ssh_user  = gitconfig_get('rsync.sshuser', file=cfgpath)
             options   = gitconfig_get('rsync.options', file=cfgpath)
             return RsyncBackend(remote,ssh_port,ssh_user,options,objdir)
         elif gitconfig_get('s3.bucket', file=cfgpath):
+            print ('---In s3.bucket')
             bucket    = gitconfig_get('s3.bucket', file=cfgpath)
             key       = gitconfig_get('s3.key', file=cfgpath)
             if key is None:
@@ -330,10 +349,12 @@ class GitFat(object):
         return (b'#$# git-fat ' + digest + (' %20d\n' % (bytecount,)).encode('ASCII'))
     def decode(self, bstring, noraise=False):
         cookie = b'#$# git-fat '
+        self.verbose('----bstring is %s, cookie is %s' %(bstring, cookie))
         if bstring.startswith(cookie):
             parts = bstring[len(cookie):].split()
             digest = parts[0]
             bytecount = int(parts[1]) if len(parts) > 1 else None
+            self.verbose('----bytecount is %s, digest is %s' %(bytecount, digest))
             return digest, int(bytecount)
         elif noraise:
             return None, None
@@ -349,6 +370,7 @@ class GitFat(object):
             return itertools.chain([preamble], readblocks(stream)), None
     def decode_file(self, fname):
         # Fast check
+        bytecount = 0L
         stat = os.lstat(fname)
         if stat.st_size != self.magiclen:
             return False, None
@@ -368,22 +390,40 @@ class GitFat(object):
         version decodes successfully, it indicates that the fat data is not currently available in
         this repository.
         '''
+        bytecount = 0L
         digest, bytecount = self.decode(body, noraise=True)
+        self.verbose('----digest is %s, bytecount is %s' %(digest, bytecount))
         return digest
     def filter_clean(self, instream, outstreamclean):
+        self.verbose("++++ Sys.maxint is %s" %sys.maxint)
+        self.verbose("--Current recursive is %s" %sys.getrecursionlimit())
         h = hashlib.new('sha1')
-        bytecount = 0
+        self.verbose('sha h key is %s' %h)
+        self.verbose('PYTHON VERSION IS %s' %sys.version)
+        bytecount = 0L
         # mkstemp requires 'str' rather than native filesystem bytes
         fd, tmpname = tempfile.mkstemp(dir=self.objdir.decode(sys.getfilesystemencoding()))
+        self.verbose('fd is %s, tmpname is %s' %(fd, tmpname))
+        self.verbose('instream is %s and type is %s' % (instream, type(instream)))
+        self.verbose('outstreamclean is %s and type is %s' % (outstreamclean, type(outstreamclean)))
         try:
             ishanging = False
             cached = False                # changes to True when file is cached
             with os.fdopen(fd, 'wb') as cache:
+                self.verbose('cache is %s and type is %s' % (cache, type(cache)))
                 outstream = cache
-                blockiter = readblocks(instream)
+                # blockiter = readblocks(instream)
+                # self.verbose('--blockiter is %s' %blockiter)
                 firstblock = True
+                count = 0
                 for block in readblocks(instream):
+                    count += 1
+                    if count % 30000 == 1:
+                        self.verbose('ishanging is %s, len(block) is %d' %(ishanging, len(block)))
+                        self.verbose('count is %s' %(count))
                     if firstblock:
+                        
+                        self.verbose('---firstbock size is %s' % len(block))
                         if len(block) == self.magiclen and self.decode_clean(block[0:self.magiclen]):
                             ishanging = True              # Working tree version is verbatim from repository (not smudged)
                             outstream = outstreamclean
@@ -391,6 +431,10 @@ class GitFat(object):
                     h.update(block)
                     bytecount += len(block)
                     outstream.write(block)
+                    # if count % 3200 == 1:
+                        # self.verbose('---flush to write to terminal each 12.5MBs')
+                        # outstream.flush()
+                self.verbose('--bytecount is %s' %bytecount)
                 outstream.flush()
             digest = h.hexdigest().encode('ASCII')
             objfile = os.path.join(self.objdir, digest)
@@ -624,6 +668,7 @@ class GitFat(object):
         revlist.wait()
         difftree.wait()
     def cmd_index_filter(self, args):
+        self.verbose('++++ Called cmd_index_filter')
         # FIXME: Need input validation here
         manage_gitattributes = '--manage-gitattributes' in args
         filelist = set(f.strip() for f in open(args[0]).readlines())
@@ -677,6 +722,8 @@ class GitFat(object):
 if __name__ == '__main__':
     fat = GitFat()
     cmd = sys.argv[1] if len(sys.argv) > 1 else ''
+    print ('sys.argv is %s' %sys.argv, file=sys.stderr)
+    print ('cmd is %s' %cmd, file=sys.stderr)
     if cmd == 'filter-clean':
         fat.cmd_filter_clean()
     elif cmd == 'filter-smudge':
