@@ -395,7 +395,7 @@ class GitFat(object):
         self.verbose('----digest is %s, bytecount is %s' %(digest, bytecount))
         return digest
     def filter_clean(self, instream, outstreamclean):
-        instream = open('D:/UETesting/Fat2/sequences/test21.h5', 'rb')
+        #instream = open('D:/UETesting/Fat2/sequences/test21.h5', 'rb')
         self.verbose("++++ Sys.maxint is %s" %sys.maxint)
         self.verbose("--Current recursive is %s" %sys.getrecursionlimit())
         bytecount = 0L
