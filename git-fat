@@ -118,7 +118,7 @@ except ImportError:
             raise RuntimeError("S3Backend requires boto.")
 
 BLOCK_SIZE = 4096
-
+LARGE_FILE_SIZE = 4294967296    # consider > 4GBs is large file size(Current limitation in windows)
 def verbose_stderr(*args, **kwargs):
     return print(*args, file=sys.stderr, **kwargs)
 def verbose_ignore(*args, **kwargs):
@@ -373,14 +373,16 @@ class GitFat(object):
     def filter_clean(self, instream, outstreamclean):
         h = hashlib.new('sha1')
         bytecount = 0
+        adjusted_lfs = False
         # mkstemp requires 'str' rather than native filesystem bytes
         fd, tmpname = tempfile.mkstemp(dir=self.objdir.decode(sys.getfilesystemencoding()))
         try:
             ishanging = False
             cached = False                # changes to True when file is cached
+            # Process for large file size (> 4GBS) in Windows
+            (instream, adjusted_lfs) = self.detect_and_adjust_std_for_lfs(instream)
             with os.fdopen(fd, 'wb') as cache:
                 outstream = cache
-                blockiter = readblocks(instream)
                 firstblock = True
                 for block in readblocks(instream):
                     if firstblock:
@@ -406,6 +408,8 @@ class GitFat(object):
                 cached = True
                 outstreamclean.write(self.encode(digest, bytecount))
         finally:
+            if adjusted_lfs:
+                instream.close()
             if not cached:
                 os.remove(tmpname)
 
@@ -428,12 +432,18 @@ class GitFat(object):
         result, bytecount = self.decode_stream(sys.stdin)
         if isinstance(result, bytes): # We got a digest
             objfile = os.path.join(self.objdir, result)
+            adjusted_lfs = False
             try:
                 self.verbose('git-fat filter-smudge: restoring from %s' % objfile)
+                # Process for large file size in Windows
+                (sys.stdout, adjusted_lfs) = self.detect_and_adjust_std_for_lfs(sys.stdout, objfile)
                 cat(open(objfile, 'rb'), sys.stdout)
             except IOError:                # file not found
                 self.verbose('git-fat filter-smudge: fat object missing %s' % objfile)
                 sys.stdout.write(self.encode(result, bytecount))   # could leave a better notice about how to recover this file
+            finally:
+                if adjusted_lfs:
+                    sys.stdout.close()
         else:                              # We have an iterable over the original input.
             self.verbose('git-fat filter-smudge: not a managed file')
             cat_iter(result, sys.stdout)
@@ -569,9 +579,15 @@ class GitFat(object):
         if gitconfig_get('filter.fat.clean') or gitconfig_get('filter.fat.smudge'):
             print('Git fat already configured, check configuration in .git/config')
         else:
-            gitconfig_set('filter.fat.clean', 'git-fat filter-clean')
-            gitconfig_set('filter.fat.smudge', 'git-fat filter-smudge')
+            filter_clean = 'git-fat filter-clean'
+            filter_smudge = 'git-fat filter-smudge'
+            if sys.platform == 'win32':
+                filter_clean = filter_clean + ' %f'
+                filter_smudge = filter_smudge + ' %f'
+            gitconfig_set('filter.fat.clean', filter_clean)
+            gitconfig_set('filter.fat.smudge', filter_smudge)
             print('Initialized git fat')
+        
     def gen_large_blobs(self, revs, threshsize):
         """Build dict of all blobs"""
         time0 = time.time()
@@ -673,6 +689,34 @@ class GitFat(object):
         lsfiles.wait()
         updateindex.wait()
 
+    def detect_and_adjust_std_for_lfs(self, std, objfile = None):
+        """
+            Detect and attempt to adjust the stdin/stdout using filestream for large files.
+            Return: A Tuple includes:
+                - Boolean indicating stdin/stdout is sdjusted or not.
+                - file object after adjust for large file size
+        """
+        if sys.platform == 'win32' and len(sys.argv) > 2:
+            real_file = os.path.abspath(sys.argv[2])
+            if std is sys.stdin:
+                file_check_lfs = real_file
+            elif std is sys.stdout:
+                file_check_lfs = objfile
+            if os.path.getsize(file_check_lfs) >= LARGE_FILE_SIZE:
+                std = self.ensure_std_lfs(std, real_file)
+            return (std, True)
+        else:
+            return (std, False)
+        
+    def ensure_std_lfs(self, std, filepath):
+        """
+            Ensure std working with large file.
+        """
+        if std is sys.stdin:
+            std = open(filepath, 'rb')
+        elif std is sys.stdout:
+            std = open(filepath, 'wb')
+        return std
 
 if __name__ == '__main__':
     fat = GitFat()
