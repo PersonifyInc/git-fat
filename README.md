@@ -17,6 +17,9 @@ Some people recommend checking binaries into different repositories or even not 
 * [git-media](https://github.com/schacon/git-media) adopts a similar approach to `git-fat`, but with a different synchronization philosophy and with many Ruby dependencies.
 
 # Installation and configuration
+
+Note: In Windows OS, to make this work with large file size (>4GBs), requires to install windows os, git and python 64 bits versions.
+
 Place `git-fat` in your `PATH`.
 
 Edit `.gitattributes` to regard any desired extensions as fat files.
