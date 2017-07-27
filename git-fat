@@ -45,6 +45,9 @@ try:
     from boto.s3.connection import S3Connection
     from boto.s3.key import Key
     import boto
+    import math
+    from filechunkio import FileChunkIO
+
     class S3Backend(object):
 
         def __init__(self,bucket,key,secret,objdir):
@@ -102,15 +105,43 @@ try:
                     k.key = file
                     localfile = os.path.abspath(os.path.join(self.objdir,file))
                     self.verbose('Uploading object %s to s3 bucket %s' % (file,self.bucket))
-                    try:
-                        k.set_contents_from_filename(localfile,
-                                                     cb=S3Counter(),
-                                                     num_cb=500)
-                    except KeyboardInterrupt:
-                        # If we cancel during upload, delete the partially uploaded
-                        # remote object. Otherwise we'll have problems later.
-                        k.delete()
-                        raise
+                    # New code to process > 5GBs file size
+                    filesize = os.path.getsize(localfile)
+                    if filesize <= S3_SINGLE_PART_UPLOAD_LIMITATION: # For filesize < 5GBs (limitation of S3 single upload)
+                        try:
+                            k.set_contents_from_filename(localfile,
+                                                         cb=S3Counter(),
+                                                         num_cb=500)
+                        except KeyboardInterrupt:
+                            # If we cancel during upload, delete the partially uploaded
+                            # remote object. Otherwise we'll have problems later.
+                            k.delete()
+                            raise
+                    else: # Large file size > 5GBs (use multipart upload)
+                        multi_part = bkt.initiate_multipart_upload(file)
+                        try:
+                            chunks_count = int(math.ceil(filesize / float(S3_MULTI_PARTS_CHUNK_SIZE)))
+                            for i in range(chunks_count):
+                                part_num = i + 1
+                                offset = i * S3_MULTI_PARTS_CHUNK_SIZE
+                                remaining_bytes = filesize - offset
+                                bytes = min([S3_MULTI_PARTS_CHUNK_SIZE, remaining_bytes])
+                                self.verbose("**Try uploading part %s of %s" %(str(part_num), str(chunks_count)))
+                                with FileChunkIO(localfile, 'r', offset=offset, bytes=bytes) as fp:
+                                    multi_part.upload_part_from_file(fp=fp, part_num=part_num, size=bytes)
+                            if len(multi_part.get_all_parts()) == chunks_count:
+                                multi_part.complete_upload()
+                                self.verbose("Finish uploading file")
+                            else:
+                                multi_part.cancel_upload()
+                                self.verbose("Fail to upload file")
+                        except KeyboardInterrupt:
+                            # If we cancel during upload, delete the partially uploaded
+                            # remote object. Otherwise we'll have problems later.
+                            multi_part.cancel_upload()
+                            k.delete()
+                            raise
+
 except ImportError:
     class S3Backend(object):
 
@@ -119,6 +150,9 @@ except ImportError:
 
 BLOCK_SIZE = 4096
 LARGE_FILE_SIZE = 4294967296    # consider > 4GBs is large file size(Current limitation in windows)
+S3_SINGLE_PART_UPLOAD_LIMITATION = 5100273664 # 5*1024*1024*1024 (5GBs) * 0.95(SafeMargin): AWS S3 has limitation of 5GBs when upload single part
+S3_MULTI_PARTS_CHUNK_SIZE = 419430400 # 4*100*1024*1024 (400MBs)
+
 def verbose_stderr(*args, **kwargs):
     return print(*args, file=sys.stderr, **kwargs)
 def verbose_ignore(*args, **kwargs):
@@ -587,7 +621,7 @@ class GitFat(object):
             gitconfig_set('filter.fat.clean', filter_clean)
             gitconfig_set('filter.fat.smudge', filter_smudge)
             print('Initialized git fat')
-        
+
     def gen_large_blobs(self, revs, threshsize):
         """Build dict of all blobs"""
         time0 = time.time()
