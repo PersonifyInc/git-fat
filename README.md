@@ -18,7 +18,11 @@ Some people recommend checking binaries into different repositories or even not 
 
 # Installation and configuration
 
-Note: In Windows OS, to make this work with large file size (>4GBs), requires to install windows os, git and python 64 bits versions.
+Note: 
+* In Windows OS, to make this work with large file size (>4GBs), requires to install windows os, git and python 64 bits versions.
+* Require following python libraries: 
+    - [boto](https://pypi.python.org/pypi/boto). Using `pip install boto`
+    - [filechunkio](https://pypi.python.org/pypi/filechunkio). Using `pip install filechunkio`
 
 Place `git-fat` in your `PATH`.
 
