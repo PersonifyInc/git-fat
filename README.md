@@ -23,6 +23,7 @@ Note:
 * Require following python libraries: 
     - [boto](https://pypi.python.org/pypi/boto). Using `pip install boto`
     - [filechunkio](https://pypi.python.org/pypi/filechunkio). Using `pip install filechunkio`
+* Make sure your date-time and timezone is correct.
 
 Place `git-fat` in your `PATH`.
 
